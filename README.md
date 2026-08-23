@@ -1,9 +1,9 @@
-# Rich Music
+# Pler Music
 
 **Pemutar musik web gratis** bergaya Spotify, katalog [YouTube Music](https://music.youtube.com). Tanpa akun.
 
-- **Website:** [richmusic.vercel.app](https://richmusic.vercel.app)
-- **Repo:** [github.com/ramax100/YT-Music-Mod](https://github.com/ramax100/YT-Music-Mod)
+- **Website:** [pler-music.vercel.app](https://pler-music.vercel.app)
+- **Repo:** [github.com/ranggacey/rich-music](https://github.com/ranggacey/rich-music)
 - **Telegram:** [t.me/ChRichStore](https://t.me/ChRichStore)
 
 Project ini **gratis** dan **bebas dipakai**. Fork, ubah, deploy sendiri, atau bagikan — silakan.
@@ -12,7 +12,7 @@ Project ini **gratis** dan **bebas dipakai**. Fork, ubah, deploy sendiri, atau b
 
 ## Tentang
 
-Rich Music adalah pemutar musik di browser. Cari lagu, buka album dan artis, buat playlist, lihat lirik, atur antrian — semuanya tanpa daftar akun.
+Pler Music adalah pemutar musik di browser. Cari lagu, buka album dan artis, buat playlist, lihat lirik, atur antrian — semuanya tanpa daftar akun.
 
 Library (favorit, playlist, riwayat, statistik) tersimpan di perangkatmu. Audio diputar lewat pemutar resmi YouTube.
 
@@ -32,7 +32,7 @@ Silakan join.
 
 ## Cara memakai website
 
-1. Buka **[richmusic.vercel.app](https://richmusic.vercel.app)**
+1. Buka **[pler-music.vercel.app](https://pler-music.vercel.app)**
 2. Cari lagu, atau pilih dari Home / Charts / Browse all
 3. Lagu pertama langsung play. Kalau klik lagu lain, Now Playing menampilkan lagu baru — tekan **Play** untuk mengganti putaran
 4. Ikon hati = favorit. **Playlist** = simpan ke folder. Di halaman album/artis, **Save** masuk tab Saved
@@ -40,13 +40,13 @@ Silakan join.
 
 ### Desktop / PC
 
-Di laptop atau komputer, Rich Music langsung siap. Buka situsnya, pilih lagu, dan putar — tidak perlu pengaturan tambahan.
+Di laptop atau komputer, Pler Music langsung siap. Buka situsnya, pilih lagu, dan putar — tidak perlu pengaturan tambahan.
 
 ### Putar di latar belakang (Android)
 
 Musik tetap jalan saat layar terkunci atau pindah aplikasi, **tanpa mode desktop**.
 
-Buka [richmusic.vercel.app](https://richmusic.vercel.app) di **[Brave Browser](https://play.google.com/store/apps/details?id=com.brave.browser)** — putar lagu, lalu keluar dari tab atau kunci HP. Audio tetap berlanjut.
+Buka [pler-music.vercel.app](https://pler-music.vercel.app) di **[Brave Browser](https://play.google.com/store/apps/details?id=com.brave.browser)** — putar lagu, lalu keluar dari tab atau kunci HP. Audio tetap berlanjut.
 
 Di Chrome, aktifkan **⋮ → Situs desktop** jika ingin hasil serupa.
 
@@ -125,8 +125,8 @@ Tanpa login, tersimpan di perangkat ini.
 Perlu [Node.js](https://nodejs.org) 18+ (disarankan 20).
 
 ```bash
-git clone https://github.com/ramax100/YT-Music-Mod.git
-cd YT-Music-Mod
+git clone https://github.com/ranggacey/rich-music.git
+cd rich-music
 npm install
 npm start
 ```
@@ -139,19 +139,19 @@ Buka **http://localhost:3000**
 
 ```bash
 npm i -g vercel
-cd YT-Music-Mod
+cd rich-music
 vercel login
 vercel --prod
 ```
 
-Atau di dashboard Vercel: **Import Git Repository** → pilih `ramax100/YT-Music-Mod` → Deploy.
+Atau di dashboard Vercel: **Import Git Repository** → pilih `ranggacey/rich-music` → Deploy.
 
 ---
 
 ## Isi repo
 
 ```
-YT-Music-Mod/
+rich-music/
 ├── public/           # website (HTML, CSS, JS, logo)
 ├── server.js         # API: YouTube Music, lirik, download
 ├── api/index.js      # entry Vercel
@@ -170,4 +170,4 @@ Jalankan, bagikan, ubah, dan deploy ulang sesukamu. Tidak ada biaya.
 
 ---
 
-**[Buka Rich Music](https://richmusic.vercel.app)** · **[Join Telegram](https://t.me/ChRichStore)** · **[GitHub](https://github.com/ramax100/YT-Music-Mod)**
+**[Buka Pler Music](https://pler-music.vercel.app)** · **[Join Telegram](https://t.me/ChRichStore)** · **[GitHub](https://github.com/ranggacey/rich-music)**

@@ -1,8 +1,7 @@
-/* ============================================================
-   Rich Music — SPA frontend
-   Streams via the official YouTube IFrame player, metadata via
-   the local proxy to YouTube Music, synced lyrics via LRCLIB.
-   ============================================================ */
+/* Pler Music — SPA frontend
+ *   Streams via the official YouTube IFrame player, metadata via
+ *   the local proxy to YouTube Music, synced lyrics via LRCLIB.
+ *   ============================================================ */
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -404,7 +403,7 @@ function restoreQueue() {
   renderPlayButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player', 'paused');
-  document.title = `${s.title} • Rich Music`;
+  document.title = `${s.title} • Pler Music`;
   applyTint(s.videoId || s.title);
   const shOn = Player.shuffle;
   $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('on', shOn);
@@ -459,7 +458,7 @@ function startCurrent() {
   updateLikeButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player');
-  document.title = `${s.title} • Rich Music`;
+  document.title = `${s.title} • Pler Music`;
   applyTint(s.videoId || s.title);
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -1859,7 +1858,7 @@ async function importFromLink(url) {
 /* ---- backup / restore whole local library as a JSON file ---- */
 function backupLibrary() {
   const data = {
-    app: 'rich-music',
+    app: 'pler-music',
     version: 2,
     exportedAt: new Date().toISOString(),
     favorites: Library.favorites,
@@ -1878,7 +1877,7 @@ function backupLibrary() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `rich-music-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `pler-music-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -1897,7 +1896,7 @@ function restoreLibrary() {
     reader.onload = () => {
       try {
         const d = JSON.parse(reader.result);
-        if (!d || (d.app !== 'rich-music' && d.app !== 'smw')) throw new Error('Not a Rich Music backup');
+        if (!d || (d.app !== 'pler-music' && d.app !== 'smw')) throw new Error('Not a Pler Music backup');
         const hasLib = Array.isArray(d.favorites) || Array.isArray(d.playlists) || Array.isArray(d.saved) || Array.isArray(d.history);
         if (!hasLib) throw new Error('Backup file is empty or invalid');
         if (Array.isArray(d.favorites)) store.set('fav', d.favorites);
