@@ -157,6 +157,68 @@ const Library = {
     const st = store.get('stats', {});
     if (st[videoId]) { st[videoId].secs += secs; store.set('stats', st); }
   },
+  // Smart Shuffle: returns weighted random index considering play count, recency, and artist diversity
+  getSmartShuffleIndex(currentIndex, queue) {
+    const stats = this.stats;
+    const history = this.history;
+    const now = Date.now();
+    
+    // Build artist last-played map
+    const artistLastPlayed = {};
+    history.forEach((h, i) => {
+      if (h.artist && !artistLastPlayed[h.artist]) artistLastPlayed[h.artist] = i; // lower = more recent
+    });
+    // Also check current queue for recent artists
+    queue.forEach((q, i) => {
+      if (i !== currentIndex && q.artist && !artistLastPlayed[q.artist]) {
+        artistLastPlayed[q.artist] = history.length + i;
+      }
+    });
+    
+    const candidates = queue.map((q, i) => ({ ...q, originalIndex: i }))
+      .filter((q, i) => i !== currentIndex);
+    
+    if (!candidates.length) return currentIndex;
+    
+    // Calculate weights
+    const maxHistoryAge = history.length || 1;
+    candidates.forEach(c => {
+      const stat = stats[c.videoId] || { plays: 0, last: 0 };
+      const playCount = stat.plays || 0;
+      const lastPlayed = stat.last || 0;
+      const artist = c.artist || '';
+      
+      // Recency factor: 0 (just played) to 1 (never played / long ago)
+      let recencyFactor = 1;
+      if (lastPlayed) {
+        const ageMs = now - lastPlayed;
+        const ageHours = ageMs / (1000 * 60 * 60);
+        recencyFactor = Math.min(1, ageHours / 24); // Full weight after 24h
+      }
+      
+      // Artist diversity factor
+      let artistFactor = 1;
+      if (artist && artistLastPlayed[artist] !== undefined) {
+        const artistRecency = artistLastPlayed[artist] / Math.max(1, maxHistoryAge + queue.length);
+        artistFactor = 0.3 + 0.7 * artistRecency; // 0.3 if just played same artist, up to 1
+      }
+      
+      // Play count factor: slight preference for less played songs (discovery)
+      // but not too strong - cap at 1.5x for unplayed
+      const playFactor = playCount === 0 ? 1.3 : Math.max(0.7, 1.5 - playCount * 0.1);
+      
+      c.weight = recencyFactor * artistFactor * playFactor;
+    });
+    
+    // Weighted random selection
+    const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);
+    let random = Math.random() * totalWeight;
+    for (const c of candidates) {
+      random -= c.weight;
+      if (random <= 0) return c.originalIndex;
+    }
+    return candidates[candidates.length - 1].originalIndex;
+  }
 };
 
 /* ================= player state ================= */
@@ -179,6 +241,13 @@ const Player = {
   cued: false,
   pending: null, // song shown in Now Playing while previous track keeps playing
   loadId: 0,
+  // Web Audio Visualizer
+  audioCtx: null,
+  analyser: null,
+  sourceNode: null,
+  visualizerEnabled: store.get('viz_on', false),
+  visualizerMode: store.get('viz_mode', 'bars'), // bars, wave, circular
+  visualizerAnimationId: null,
   get current() { return this.queue[this.index] || null; },
 };
 
@@ -207,6 +276,133 @@ function applyPlaybackQuality() {
     try { Player.yt.setPlaybackQuality('hd720'); } catch {}
     try { Player.yt.setPlaybackQualityRange('hd720', 'hd720'); } catch {}
   }
+}
+
+/* ============ Web Audio Visualizer ============ */
+function initVisualizer() {
+  if (Player.audioCtx) return;
+  try {
+    Player.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    Player.analyser = Player.audioCtx.createAnalyser();
+    Player.analyser.fftSize = 256;
+    Player.analyser.smoothingTimeConstant = 0.8;
+    const iframe = Player.yt.getIframe && Player.yt.getIframe();
+    if (iframe) {
+      // Note: YouTube IFrame doesn't expose audio output directly for Web Audio API
+      // This is a limitation - we'll use a fallback animation based on playback state
+    }
+  } catch (e) {
+    console.warn('Web Audio not available:', e);
+  }
+}
+
+function startVisualizer() {
+  if (!Player.visualizerEnabled || Player.visualizerAnimationId) return;
+  const canvas = $('#np-visualizer');
+  if (!canvas) return;
+  canvas.classList.add('visible');
+  drawVisualizerFrame();
+}
+
+function stopVisualizer() {
+  if (Player.visualizerAnimationId) {
+    cancelAnimationFrame(Player.visualizerAnimationId);
+    Player.visualizerAnimationId = null;
+  }
+  const canvas = $('#np-visualizer');
+  if (canvas) canvas.classList.remove('visible');
+}
+
+function drawVisualizerFrame() {
+  if (!Player.visualizerEnabled) return;
+  const canvas = $('#np-visualizer');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width = canvas.offsetWidth;
+  const height = canvas.height = canvas.offsetHeight;
+  ctx.clearRect(0, 0, width, height);
+
+  // Fallback: animated bars based on playback state (since YouTube iframe doesn't expose audio)
+  const time = Date.now() / 1000;
+  const barCount = 32;
+  const barWidth = width / barCount * 0.6;
+  const gap = width / barCount * 0.4;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const maxRadius = Math.min(width, height) * 0.4;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--eq').trim() || '#1ed760';
+
+  if (Player.visualizerMode === 'bars') {
+    for (let i = 0; i < barCount; i++) {
+      const x = i * (barWidth + gap) + gap / 2;
+      const phase = i * 0.3;
+      const height_ = Math.max(4, Math.abs(Math.sin(time * 2 + phase)) * height * 0.8);
+      const y = height - height_;
+      const grad = ctx.createLinearGradient(x, height, x, y);
+      grad.addColorStop(0, color);
+      grad.addColorStop(1, color.replace(')', ', 0.3)').replace('rgb', 'rgba').replace('#', '').length === 7 
+        ? color + '80' : color);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, barWidth, height_);
+    }
+  } else if (Player.visualizerMode === 'circular') {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    for (let i = 0; i < barCount; i++) {
+      const angle = (i / barCount) * Math.PI * 2;
+      const phase = i * 0.2;
+      const length = Math.max(10, Math.abs(Math.sin(time * 3 + phase)) * maxRadius * 0.6);
+      const x1 = centerX + Math.cos(angle) * (maxRadius - length);
+      const y1 = centerY + Math.sin(angle) * (maxRadius - length);
+      const x2 = centerX + Math.cos(angle) * maxRadius;
+      const y2 = centerY + Math.sin(angle) * maxRadius;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  } else { // wave
+    ctx.beginPath();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color;
+    for (let x = 0; x <= width; x++) {
+      const y = centerY + Math.sin(time * 2 + x * 0.02) * height * 0.3 * Math.sin(time);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  Player.visualizerAnimationId = requestAnimationFrame(drawVisualizerFrame);
+}
+
+function toggleVisualizer() {
+  Player.visualizerEnabled = !Player.visualizerEnabled;
+  store.set('viz_on', Player.visualizerEnabled);
+  if (Player.visualizerEnabled) {
+    startVisualizer();
+    toast('Visualizer ON');
+  } else {
+    stopVisualizer();
+    toast('Visualizer OFF');
+  }
+  updateVisualizerButton();
+}
+
+function cycleVisualizerMode() {
+  const modes = ['bars', 'circular', 'wave'];
+  const idx = modes.indexOf(Player.visualizerMode);
+  Player.visualizerMode = modes[(idx + 1) % modes.length];
+  store.set('viz_mode', Player.visualizerMode);
+  toast(`Visualizer: ${Player.visualizerMode}`);
+  updateVisualizerButton();
+}
+
+function updateVisualizerButton() {
+  const btn = $('#np-viz');
+  if (!btn) return;
+  btn.classList.toggle('on', Player.visualizerEnabled);
+  const span = btn.querySelector('span');
+  if (span) span.textContent = Player.visualizerEnabled ? 'Viz: ' + Player.visualizerMode : 'Viz';
 }
 function updateQualityButton() {
   const btn = $('#np-quality');
@@ -261,6 +457,7 @@ window.onYouTubeIframeAPIReady = () => {
         const v = store.get('vol', 100);
         Player.yt.setVolume(Number(v));
         applyPlaybackQuality();
+        initVisualizer();
         try {
           const iframe = Player.yt.getIframe && Player.yt.getIframe();
           if (iframe) iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
@@ -279,8 +476,12 @@ window.onYouTubeIframeAPIReady = () => {
           applyPlaybackQuality();
           setTimeout(applyPlaybackQuality, 500);
           setTimeout(applyPlaybackQuality, 2000);
+          if (Player.visualizerEnabled) startVisualizer();
         }
         if (e.data === YT.PlayerState.BUFFERING) applyPlaybackQuality();
+        if (e.data === YT.PlayerState.PAUSED) {
+          if (Player.visualizerEnabled) stopVisualizer();
+        }
         document.body.classList.toggle('paused', e.data !== YT.PlayerState.PLAYING);
         renderPlayButtons();
       },
@@ -477,6 +678,8 @@ function startCurrent() {
   Player.lyricsBrowseId = null;
   $('#related-list').innerHTML = '<div class="loading-note">Loading…</div>';
   Player._relatedLoaded = false;
+  // Visualizer: restart on new track
+  if (Player.visualizerEnabled) startVisualizer();
   // if the Related tab is currently open, reload it right away for the new song
   // (small delay so fetchQueue for the new song has started first)
   if ($('#np-related').classList.contains('active') && !$('#nowplaying').classList.contains('hidden')) {
@@ -525,11 +728,8 @@ function nextTrack(auto) {
     const userNext = Player.queue.findIndex((q, i) => i > Player.index && q._user);
     if (userNext >= 0) ni = userNext;
     else {
-      const others = Player.queue.map((_, i) => i).filter((i) => i !== Player.index);
-      if (!others.length) {
-        if (Player.repeat === 1) ni = Player.index;
-        else return;
-      } else ni = others[Math.floor(Math.random() * others.length)];
+      // Smart Shuffle: use weighted algorithm based on play count, recency, artist diversity
+      ni = Library.getSmartShuffleIndex(Player.index, Player.queue);
     }
   } else ni = Player.index + 1;
   if (ni >= Player.queue.length) {
@@ -1425,12 +1625,14 @@ async function viewHome(view) {
   const dateLine = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
   let html = `<div class="hello-row"><div><div class="greeting">${esc(dateLine)}</div><h1 class="page-title">${greet}</h1></div></div>`;
   if (hist.length) {
-    html += `<div class="shelf-title">Recently played</div><div class="quick-grid">${hist.slice(0, 8).map((s) => quickCardHTML({ ...s, type: 'song', subtitle: s.artist })).join('')}</div>`;
+    // Recently Played - prominent carousel
+    html += `<div class="shelf"><div class="shelf-title">Recently Played</div>
+      ${carouselHTML(hist.slice(0, 12).map((s) => cardHTML({ ...s, type: 'song', subtitle: s.artist })).join(''))}</div>`;
   }
   html += `<div id="mix-slot"></div>`;
-  if (hist.length > 8) {
+  if (hist.length > 12) {
     html += `<div class="shelf"><div class="shelf-title">Jump back in</div>${carouselHTML(hist
-      .slice(8).map((s) => cardHTML({ ...s, type: 'song', subtitle: s.artist })).join(''))}</div>`;
+      .slice(12).map((s) => cardHTML({ ...s, type: 'song', subtitle: s.artist })).join(''))}</div>`;
   }
   if (favs.length) {
     html += `<div class="shelf"><div class="shelf-title">Liked songs</div>
@@ -1565,13 +1767,27 @@ function relatedSectionsHTML(sections) {
 }
 function recentSearchHTML() {
   const rec = store.get('srec', []).filter(Boolean).slice(0, 8);
-  if (!rec.length) return '';
-  return `<div class="shelf-title recent-head"><span>Recent searches</span>
-    <button type="button" class="q-clear" id="srec-clear">Clear</button></div>
-    <div class="recent-row">${rec.map((qq) => `<span class="recent-chip">
-      <button type="button" class="recent-go" data-q="${esc(qq)}">${icon('i-clock')}<span>${esc(qq)}</span></button>
-      <button type="button" class="recent-x" data-rm="${esc(qq)}" title="Remove">${icon('i-x')}</button>
-    </span>`).join('')}</div>`;
+  // Quick suggestions from favorites/artists
+  const favArtists = [...new Set(Library.favorites.map(f => f.artist).filter(Boolean))].slice(0, 4);
+  const histArtists = [...new Set(Library.history.map(h => h.artist).filter(Boolean))].slice(0, 4);
+  const quickSuggestions = [...new Set([...favArtists, ...histArtists])].slice(0, 6);
+  
+  let html = '';
+  if (rec.length) {
+    html += `<div class="shelf-title recent-head"><span>Recent searches</span>
+      <button type="button" class="q-clear" id="srec-clear">Clear</button></div>
+      <div class="recent-row">${rec.map((qq) => `<span class="recent-chip">
+        <button type="button" class="recent-go" data-q="${esc(qq)}">${icon('i-clock')}<span>${esc(qq)}</span></button>
+        <button type="button" class="recent-x" data-rm="${esc(qq)}" title="Remove">${icon('i-x')}</button>
+      </span>`).join('')}</div>`;
+  }
+  if (quickSuggestions.length) {
+    html += `<div class="shelf-title recent-head"><span>Quick suggestions</span></div>
+      <div class="recent-row">${quickSuggestions.map((a) => `<span class="recent-chip">
+        <button type="button" class="recent-go" data-q="${esc(a)}">${icon('i-search')}<span>${esc(a)}</span></button>
+      </span>`).join('')}</div>`;
+  }
+  return html;
 }
 function bindSearchChrome(view, q, filter) {
   const input = $('#search-input');
@@ -2439,6 +2655,179 @@ function openAddToPlaylist(song) {
 $('#modal-cancel').addEventListener('click', closeModal);
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
 
+/* ================= Theme Customizer ================= */
+const THEME_PRESETS = [
+  { name: 'Default Green', tint: 140, accent: '#1db954', bg: '#000000' },
+  { name: 'Ocean Blue', tint: 200, accent: '#00bcd4', bg: '#000000' },
+  { name: 'Sunset Orange', tint: 30, accent: '#ff9800', bg: '#000000' },
+  { name: 'Passion Red', tint: 350, accent: '#f44336', bg: '#000000' },
+  { name: 'Royal Purple', tint: 270, accent: '#9c27b0', bg: '#000000' },
+  { name: 'Cyber Pink', tint: 320, accent: '#e91e63', bg: '#000000' },
+  { name: 'Forest Green', tint: 120, accent: '#4caf50', bg: '#000000' },
+  { name: 'Deep Indigo', tint: 240, accent: '#3f51b5', bg: '#000000' },
+];
+
+function openThemeCustomizer() {
+  const modal = $('#theme-modal');
+  const body = $('#theme-modal-body');
+  const currentTint = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--tint').trim()) || 140;
+  const currentAccent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1db954';
+  const currentBg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#000000';
+
+  const render = () => {
+    body.innerHTML = `
+      <div class="theme-section">
+        <h4>Color Presets</h4>
+        <div class="theme-presets">${THEME_PRESETS.map(p => `
+          <button class="theme-preset${p.tint === currentTint && p.accent === currentAccent ? ' active' : ''}" 
+            data-tint="${p.tint}" data-accent="${p.accent}" data-bg="${p.bg}"
+            style="--preset-accent: ${p.accent};" title="${p.name}">
+            <span class="preset-dot"></span>
+            <span class="preset-name">${p.name}</span>
+          </button>
+        `).join('')}</div>
+      </div>
+      <div class="theme-section">
+        <h4>Custom Tint (Hue)</h4>
+        <input type="range" id="tint-slider" min="0" max="359" value="${currentTint}" class="theme-slider">
+        <span id="tint-value">${currentTint}°</span>
+      </div>
+      <div class="theme-section">
+        <h4>Accent Color</h4>
+        <input type="color" id="accent-color" value="${currentAccent}" class="theme-color-input">
+      </div>
+      <div class="theme-section">
+        <h4>Background Color</h4>
+        <input type="color" id="bg-color" value="${currentBg}" class="theme-color-input">
+      </div>
+      <div class="theme-section">
+        <h4>Light Mode Preset</h4>
+        <button class="pill-btn" id="light-preset-btn">Use current as Light theme</button>
+      </div>
+    `;
+
+    $$('.theme-preset', body).forEach(btn => {
+      btn.addEventListener('click', () => applyThemePreset(btn.dataset.tint, btn.dataset.accent, btn.dataset.bg));
+    });
+    $('#tint-slider').addEventListener('input', (e) => {
+      $('#tint-value').textContent = e.target.value + '°';
+      applyCustomTint(e.target.value);
+    });
+    $('#accent-color').addEventListener('input', (e) => applyCustomAccent(e.target.value));
+    $('#bg-color').addEventListener('input', (e) => applyCustomBg(e.target.value));
+    $('#light-preset-btn').addEventListener('click', saveLightPreset);
+  };
+
+  render();
+  modal.classList.remove('hidden');
+}
+
+function applyThemePreset(tint, accent, bg) {
+  document.documentElement.style.setProperty('--tint', tint);
+  document.documentElement.style.setProperty('--accent', accent);
+  document.documentElement.style.setProperty('--accent-bright', lightenColor(accent, 20));
+  document.documentElement.style.setProperty('--bg', bg);
+  document.documentElement.style.setProperty('--main-bg', lightenColor(bg, 10));
+  document.documentElement.style.setProperty('--eq', accent);
+  store.set('custom_tint', tint);
+  store.set('custom_accent', accent);
+  store.set('custom_bg', bg);
+  updateThemePresetsUI();
+  toast('Theme applied');
+}
+
+function applyCustomTint(tint) {
+  document.documentElement.style.setProperty('--tint', tint);
+  store.set('custom_tint', tint);
+}
+
+function applyCustomAccent(accent) {
+  document.documentElement.style.setProperty('--accent', accent);
+  document.documentElement.style.setProperty('--accent-bright', lightenColor(accent, 20));
+  document.documentElement.style.setProperty('--eq', accent);
+  store.set('custom_accent', accent);
+}
+
+function applyCustomBg(bg) {
+  document.documentElement.style.setProperty('--bg', bg);
+  document.documentElement.style.setProperty('--main-bg', lightenColor(bg, 10));
+  store.set('custom_bg', bg);
+}
+
+function lightenColor(hex, percent) {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const amt = Math.round(2.55 * percent);
+  const R = Math.min(255, (num >> 16) + amt);
+  const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
+  const B = Math.min(255, (num & 0x0000FF) + amt);
+  return '#' + (0x1000000 + (R << 16) + (G << 8) + B).toString(16).slice(1);
+}
+
+function saveLightPreset() {
+  const tint = getComputedStyle(document.documentElement).getPropertyValue('--tint').trim();
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  // Calculate light variants
+  const lightBg = lightenColor(bg, 85);
+  const lightMainBg = lightenColor(bg, 90);
+  const lightAccent = lightenColor(accent, -30);
+  const lightAccentBright = lightenColor(accent, -10);
+  
+  store.set('light_tint', tint);
+  store.set('light_accent', lightAccent);
+  store.set('light_accent_bright', lightAccentBright);
+  store.set('light_bg', lightBg);
+  store.set('light_main_bg', lightMainBg);
+  toast('Light theme preset saved');
+}
+
+function updateThemePresetsUI() {
+  const body = $('#theme-modal-body');
+  if (!body) return;
+  const currentTint = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--tint').trim()) || 140;
+  const currentAccent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1db954';
+  $$('.theme-preset', body).forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.tint) === currentTint && btn.dataset.accent === currentAccent);
+  });
+}
+
+function loadCustomTheme() {
+  const tint = store.get('custom_tint');
+  const accent = store.get('custom_accent');
+  const bg = store.get('custom_bg');
+  if (tint !== undefined) document.documentElement.style.setProperty('--tint', tint);
+  if (accent) document.documentElement.style.setProperty('--accent', accent);
+  if (accent) document.documentElement.style.setProperty('--accent-bright', lightenColor(accent, 20));
+  if (accent) document.documentElement.style.setProperty('--eq', accent);
+  if (bg) {
+    document.documentElement.style.setProperty('--bg', bg);
+    document.documentElement.style.setProperty('--main-bg', lightenColor(bg, 10));
+  }
+  // Load light preset if exists
+  const lightTint = store.get('light_tint');
+  const lightAccent = store.get('light_accent');
+  const lightAccentBright = store.get('light_accent_bright');
+  const lightBg = store.get('light_bg');
+  const lightMainBg = store.get('light_main_bg');
+  if (lightTint) document.documentElement.style.setProperty('--tint-light', lightTint);
+  if (lightAccent) document.documentElement.style.setProperty('--accent-light', lightAccent);
+  if (lightAccentBright) document.documentElement.style.setProperty('--accent-bright-light', lightAccentBright);
+  if (lightBg) document.documentElement.style.setProperty('--bg-light', lightBg);
+  if (lightMainBg) document.documentElement.style.setProperty('--main-bg-light', lightMainBg);
+}
+
+$('#theme-customize').addEventListener('click', openThemeCustomizer);
+$('#theme-modal-cancel').addEventListener('click', () => $('#theme-modal').classList.add('hidden'));
+$('#theme-modal').addEventListener('click', (e) => { if (e.target.id === 'theme-modal') $('#theme-modal').classList.add('hidden'); });
+
+/* ================= Keyboard Shortcuts Help ================= */
+function openShortcutsHelp() {
+  const modal = $('#shortcuts-modal');
+  modal.classList.remove('hidden');
+}
+$('#shortcuts-modal-cancel').addEventListener('click', () => $('#shortcuts-modal').classList.add('hidden'));
+$('#shortcuts-modal').addEventListener('click', (e) => { if (e.target.id === 'shortcuts-modal') $('#shortcuts-modal').classList.add('hidden'); });
+
 /* ================= wire up controls ================= */
 $('#mini-play').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
 $('#mini-next').addEventListener('click', (e) => { e.stopPropagation(); nextTrack(false); });
@@ -2537,6 +2926,8 @@ $('#np-speed').addEventListener('click', cycleSpeed);
 $('#np-float').addEventListener('click', toggleFloatWidget);
 $('#mini-float').addEventListener('click', (e) => { e.stopPropagation(); toggleFloatWidget(); });
 $('#np-quality').addEventListener('click', toggleQuality);
+$('#np-viz').addEventListener('click', toggleVisualizer);
+$('#np-viz').addEventListener('contextmenu', (e) => { e.preventDefault(); cycleVisualizerMode(); });
 $('#np-sb').addEventListener('click', toggleSB);
 $('#np-volume').addEventListener('input', (e) => {
   if (Player.yt) Player.yt.setVolume(Number(e.target.value));
@@ -2575,8 +2966,10 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'ArrowRight' && e.shiftKey) nextTrack(false);
   if (e.code === 'ArrowLeft' && e.shiftKey) prevTrack();
   if (e.code === 'Escape') closeNowPlaying();
-  if (e.code === 'KeyL') toggleTheme();
+  if (e.code === 'KeyL' && e.shiftKey) { e.preventDefault(); openThemeCustomizer(); }
+  if (e.code === 'KeyL' && !e.shiftKey) toggleTheme();
   if (e.code === 'KeyP') { e.preventDefault(); toggleFloatWidget(); }
+  if (e.code === 'Slash' && e.shiftKey) { e.preventDefault(); openShortcutsHelp(); }
 });
 
 /* topbar back / forward (Spotify chrome) */
@@ -3027,6 +3420,7 @@ if ('serviceWorker' in navigator) {
 
 /* boot */
 (() => {
+  loadCustomTheme();
   const splash = $('#splash');
   if (!splash) return;
   const hide = () => {
