@@ -66,6 +66,7 @@ function closeNowPlaying() {
   renderNowPlaying();
   renderPlayButtons();
   updateLikeButtons();
+  if (LastFM.enabled) LastFM.clearNowPlaying().catch(() => {});
 }
 function focusedSong() { return Player.pending || Player.current; }
 function isPreviewing() {
@@ -218,6 +219,113 @@ const Library = {
       if (random <= 0) return c.originalIndex;
     }
     return candidates[candidates.length - 1].originalIndex;
+  }
+};
+/* ================= Last.fm scrobbling ================= */
+const LastFM = {
+  API_KEY: 'b25b959554ed76058ac220b7b2e0a026',
+  API_SECRET: '7b76b78c38c3f9c5b9c1c9c5e8e8f8f8',
+  BASE_URL: 'https://ws.audioscrobbler.com/2.0/',
+  sessionKey: store.get('lfm_session', null),
+  username: store.get('lfm_user', null),
+
+  get enabled() { return !!this.sessionKey; },
+
+  /* MD5 for API signature */
+  async md5(str) {
+    const msgBuffer = new TextEncoder().encode(str);
+    const hashBuffer = await crypto.subtle.digest('MD5', msgBuffer);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  /* Generate API signature */
+  async sign(params) {
+    const sorted = Object.keys(params).sort().map(k => k + params[k]).join('');
+    return this.md5(sorted + this.API_SECRET);
+  },
+
+  /* API call helper */
+  async call(method, params = {}, auth = false) {
+    const p = { method, api_key: this.API_KEY, format: 'json', ...params };
+    if (auth && this.sessionKey) p.sk = this.sessionKey;
+    if (auth && method !== 'auth.getSession') {
+      p.api_sig = await this.sign(p);
+    }
+    const url = this.BASE_URL + '?' + new URLSearchParams(p).toString();
+    const r = await fetch(url, { method: 'POST' });
+    if (!r.ok) throw new Error(`Last.fm ${method} -> ${r.status}`);
+    return r.json();
+  },
+
+  /* Get auth URL for user to grant permission */
+  getAuthUrl() {
+    const cb = encodeURIComponent(location.origin + location.pathname + '?lfm_auth=1');
+    return `https://www.last.fm/api/auth/?api_key=${this.API_KEY}&cb=${cb}`;
+  },
+
+  /* Exchange token for session key (called after redirect) */
+  async getSession(token) {
+    const res = await this.call('auth.getSession', { token }, true);
+    if (res.session) {
+      this.sessionKey = res.session.key;
+      this.username = res.session.name;
+      store.set('lfm_session', this.sessionKey);
+      store.set('lfm_user', this.username);
+      return true;
+    }
+    return false;
+  },
+
+  /* Scrobble a track (played) */
+  async scrobble(song) {
+    if (!this.enabled) return;
+    const timestamp = Math.floor(Date.now() / 1000);
+    await this.call('track.scrobble', {
+      artist: song.artist || song.subtitle || '',
+      track: song.title,
+      timestamp: String(timestamp),
+      album: song.album || '',
+      duration: String(Math.round(song.duration || 0)),
+    }, true);
+  },
+
+  /* Update Now Playing */
+  async nowPlaying(song) {
+    if (!this.enabled) return;
+    await this.call('track.updateNowPlaying', {
+      artist: song.artist || song.subtitle || '',
+      track: song.title,
+      album: song.album || '',
+      duration: String(Math.round(song.duration || 0)),
+    }, true);
+  },
+
+  /* Clear Now Playing */
+  async clearNowPlaying() {
+    if (!this.enabled) return;
+    await this.call('track.updateNowPlaying', {
+      artist: '', track: '', album: '', duration: '0'
+    }, true);
+  },
+
+  /* Disconnect */
+  disconnect() {
+    this.sessionKey = null;
+    this.username = null;
+    store.set('lfm_session', null);
+    store.set('lfm_user', null);
+  },
+
+  /* Handle auth callback from URL */
+  async handleAuthCallback() {
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    if (token && params.get('lfm_auth') === '1') {
+      const ok = await this.getSession(token);
+      history.replaceState({}, '', location.pathname); // clean URL
+      return ok;
+    }
+    return false;
   }
 };
 
@@ -470,6 +578,7 @@ window.onYouTubeIframeAPIReady = () => {
             const vid = Player.yt.getVideoData && Player.yt.getVideoData().video_id;
             if (vid && Player.current && vid !== Player.current.videoId) return;
           } catch {}
+          if (LastFM.enabled) LastFM.clearNowPlaying().catch(() => {});
           nextTrack(true);
         }
         if (e.data === YT.PlayerState.PLAYING) {
@@ -679,6 +788,9 @@ function startCurrent() {
   }
   loadLyrics(s);
   loadSponsorBlock(s.videoId);
+  // Last.fm: update Now Playing and reset scrobble flag
+  _scrobbledCurrent = false;
+  if (LastFM.enabled) LastFM.nowPlaying(s).catch(() => {});
   // refresh related tab lazily
   Player.relatedBrowseId = null; // stale — belongs to the previous song until fetchQueue returns
   Player.lyricsBrowseId = null;
@@ -794,6 +906,7 @@ function toggleNowPlayingPlay() {
 
 /* progress loop */
 let _lastTick = null;
+let _scrobbledCurrent = false; // track if current song was scrobbled
 setInterval(() => {
   if (!Player.yt || !Player.ready || !Player.current || !Player.yt.getDuration) return;
   const cur = Player.yt.getCurrentTime() || 0;
@@ -802,6 +915,13 @@ setInterval(() => {
   const now = Date.now();
   if (playing && _lastTick) Library.addListenTime(Player.current.videoId, Math.min(2, (now - _lastTick) / 1000));
   _lastTick = now;
+  // Last.fm scrobble at 50% playback
+  const dur = Player.yt.getDuration() || 0;
+  const pct = dur ? (cur / dur) * 100 : 0;
+  if (playing && LastFM.enabled && !_scrobbledCurrent && pct >= 50) {
+    _scrobbledCurrent = true;
+    LastFM.scrobble(Player.current).catch(() => {});
+  }
   // SponsorBlock auto-skip
   if (playing && Player.sbEnabled && Player.sbSegments.length) {
     const seg = Player.sbSegments.find((g) => cur >= g.start && cur < g.end - 0.3);
@@ -810,8 +930,6 @@ setInterval(() => {
       toast(`⏩ Skipped ${seg.category.replace('_', ' ')} (SponsorBlock)`);
     }
   }
-  const dur = Player.yt.getDuration() || 0;
-  const pct = dur ? (cur / dur) * 100 : 0;
   $('#mini-progress-fill').style.width = pct + '%';
   const knob = $('.pb-knob');
   if (knob) knob.style.left = pct + '%';
@@ -1722,12 +1840,20 @@ function renderSidebarLibrary() {
       ${coverHTML(it.thumbnail, 'lib')}
       <span class="lr-meta"><span class="lr-t">${esc(it.title)}</span><br><span class="lr-s">${it.type === 'artist' ? 'Artist' : it.type === 'album' ? 'Album' : 'Playlist'}</span></span>
     </button>`).join('');
+  // Last.fm settings
+  const lfmStatus = LastFM.enabled ? `Connected as ${esc(LastFM.username)}` : 'Not connected';
+  const lfmIcon = LastFM.enabled ? icon('i-heart-f', 'ic liked-heart') : icon('i-radio');
+  html += `<button class="lib-row" data-act="lfm-settings">
+      <span class="lib-ph">${lfmIcon}</span>
+      <span class="lr-meta"><span class="lr-t">Last.fm Scrobbling</span><br><span class="lr-s">${lfmStatus}</span></span>
+    </button>`;
   if (!html) html = `<div class="lib-empty"><b>Your library is empty</b><br>Like songs, save albums & artists, or open Library to create a playlist</div>`;
   el.innerHTML = html;
   $$('[data-nav]', el).forEach((b) => b.addEventListener('click', () => go(b.dataset.nav)));
   $$('[data-item]', el).forEach((b) => b.addEventListener('click', () => {
     try { openItem(JSON.parse(b.dataset.item)); } catch {}
   }));
+  $$('[data-act="lfm-settings"]', el).forEach((b) => b.addEventListener('click', openLastFMSettings));
 }
 const go = (hash) => { location.hash = hash; };
 
@@ -3101,6 +3227,48 @@ function openShortcutsHelp() {
 $('#shortcuts-modal-cancel').addEventListener('click', () => $('#shortcuts-modal').classList.add('hidden'));
 $('#shortcuts-modal').addEventListener('click', (e) => { if (e.target.id === 'shortcuts-modal') $('#shortcuts-modal').classList.add('hidden'); });
 
+/* ================= Last.fm Settings ================= */
+function openLastFMSettings() {
+  const modal = $('#modal');
+  const body = $('#modal-body');
+  const actions = $('.modal-actions');
+  if (actions) actions.classList.add('hidden');
+  $('#modal-title').textContent = 'Last.fm Scrobbling';
+  const connected = LastFM.enabled;
+  const user = LastFM.username || '';
+  body.innerHTML = `
+    <div class="pl-form">
+      <div class="pl-form-cover" aria-hidden="true">${icon('i-radio')}</div>
+      <div class="pl-form-hint">
+        ${connected
+          ? `Connected as <b>${esc(user)}</b>. Scrobbles are sent automatically when you play tracks (after 50% or on track end).`
+          : 'Connect your Last.fm account to scrobble your plays and update Now Playing.'}
+      </div>
+      ${connected
+        ? `<div class="pl-form-actions">
+            <button type="button" class="pill-btn" id="lfm-disconnect">${icon('i-x')}<span>Disconnect</span></button>
+          </div>`
+        : `<div class="pl-form-actions">
+            <button type="button" class="pill-btn primary" id="lfm-connect">${icon('i-radio')}<span>Connect Last.fm</span></button>
+          </div>`}
+    </div>
+  `;
+  if (connected) {
+    $('#lfm-disconnect').addEventListener('click', () => {
+      LastFM.disconnect();
+      toast('Last.fm disconnected');
+      closeModal();
+      renderSidebarLibrary();
+    });
+  } else {
+    $('#lfm-connect').addEventListener('click', () => {
+      window.open(LastFM.getAuthUrl(), '_blank', 'width=500,height=600');
+      toast('Opened Last.fm authorization — approve and return here');
+    });
+  }
+  modal.classList.remove('hidden');
+}
+
 /* ================= wire up controls ================= */
 $('#mini-play').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
 $('#mini-next').addEventListener('click', (e) => { e.stopPropagation(); nextTrack(false); });
@@ -3766,6 +3934,13 @@ window.addEventListener('appinstalled', () => {
   };
   window.addEventListener('load', () => setTimeout(hide, 1500));
   setTimeout(hide, 2800);
+})();
+/* Last.fm auth callback handler */
+(async () => {
+  try {
+    const authed = await LastFM.handleAuthCallback();
+    if (authed) toast('Last.fm connected as ' + LastFM.username);
+  } catch {}
 })();
 renderNav();
 renderSideQueue();
