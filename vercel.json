@@ -5,6 +5,8 @@
     { "src": "public/**", "use": "@vercel/static" }
   ],
   "routes": [
+    { "src": "/sw.js", "headers": { "Cache-Control": "no-cache, no-store, must-revalidate", "Service-Worker-Allowed": "/" }, "dest": "/public/sw.js" },
+    { "src": "/manifest.json", "headers": { "Cache-Control": "public, max-age=86400" }, "dest": "/public/manifest.json" },
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "src": "/(.+\\.(css|js|png|ico|svg|json|webmanifest|jpg|jpeg|webp))", "dest": "/public/$1" },
     { "src": "/(.*)", "dest": "/public/index.html" }
