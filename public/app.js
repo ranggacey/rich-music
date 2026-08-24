@@ -1160,6 +1160,146 @@ function renderQueue() {
         renderQueue();
       });
     });
+  } else {
+    // Mobile touch drag-and-drop for queue reordering
+    $$('.track.q-user', el).forEach((row) => {
+      let touchStartY = 0;
+      let touchStartIndex = -1;
+      let isDragging = false;
+      let dragElement = null;
+      let placeholder = null;
+
+      const handleTouchStart = (e) => {
+        if (e.target.closest('.tbtn')) return; // Don't interfere with buttons
+        touchStartY = e.touches[0].clientY;
+        touchStartIndex = Number(row.dataset.qi);
+        if (!Number.isFinite(touchStartIndex) || touchStartIndex <= Player.index) return;
+        if (!Player.queue[touchStartIndex] || !Player.queue[touchStartIndex]._user) return;
+
+        row.classList.add('dragging');
+        isDragging = true;
+
+        // Create a visual clone for dragging
+        dragElement = row.cloneNode(true);
+        dragElement.style.position = 'fixed';
+        dragElement.style.left = '0';
+        dragElement.style.right = '0';
+        dragElement.style.zIndex = '1000';
+        dragElement.style.pointerEvents = 'none';
+        dragElement.style.opacity = '0.8';
+        dragElement.style.transform = `translateY(${e.touches[0].clientY - row.getBoundingClientRect().top}px)`;
+        document.body.appendChild(dragElement);
+
+        // Hide original row but keep space
+        row.style.opacity = '0';
+        row.style.pointerEvents = 'none';
+
+        // Create placeholder
+        placeholder = document.createElement('div');
+        placeholder.className = 'drag-placeholder';
+        placeholder.style.height = row.offsetHeight + 'px';
+        placeholder.style.background = 'var(--hover-strong)';
+        placeholder.style.border = '2px dashed var(--accent-bright)';
+        placeholder.style.borderRadius = '6px';
+        row.parentNode.insertBefore(placeholder, row);
+
+        e.preventDefault(); // Prevent scrolling while dragging
+      };
+
+      const handleTouchMove = (e) => {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        const deltaY = touch.clientY - touchStartY;
+
+        // Move drag element
+        if (dragElement) {
+          dragElement.style.transform = `translateY(${deltaY + (e.touches[0].clientY - row.getBoundingClientRect().top)}px)`;
+        }
+
+        // Find target position
+        const container = el;
+        const rows = $$('.track.q-user', container);
+        let targetIndex = -1;
+
+        rows.forEach((r, idx) => {
+          if (r === row) return;
+          const rect = r.getBoundingClientRect();
+          const rowCenter = rect.top + rect.height / 2;
+          if (touch.clientY < rowCenter) {
+            targetIndex = Number(r.dataset.qi);
+            // Move placeholder before this row
+            if (placeholder && placeholder.parentNode) {
+              r.parentNode.insertBefore(placeholder, r);
+            }
+          }
+        });
+
+        // If past all rows, move placeholder to end
+        if (targetIndex === -1 && placeholder && placeholder.parentNode) {
+          container.appendChild(placeholder);
+        }
+
+        e.preventDefault(); // Prevent scrolling
+      };
+
+      const handleTouchEnd = () => {
+        if (!isDragging) return;
+        isDragging = false;
+
+        // Clean up drag element
+        if (dragElement) {
+          dragElement.remove();
+          dragElement = null;
+        }
+
+        // Find final position from placeholder
+        let toIndex = -1;
+        if (placeholder && placeholder.parentNode) {
+          const rows = $$('.track.q-user', placeholder.parentNode);
+          rows.forEach((r, idx) => {
+            if (r === placeholder) {
+              // Find the next actual track row
+              for (let i = idx + 1; i < rows.length; i++) {
+                if (rows[i] !== row) {
+                  toIndex = Number(rows[i].dataset.qi);
+                  break;
+                }
+              }
+              if (toIndex === -1) {
+                // Check previous rows
+                for (let i = idx - 1; i >= 0; i--) {
+                  if (rows[i] !== row) {
+                    toIndex = Number(rows[i].dataset.qi) + 1;
+                    break;
+                  }
+                }
+              }
+            }
+          });
+          placeholder.remove();
+          placeholder = null;
+        }
+
+        // Restore original row
+        row.style.opacity = '';
+        row.style.pointerEvents = '';
+        row.classList.remove('dragging');
+
+        // Perform the move
+        if (Number.isFinite(toIndex) && toIndex !== touchStartIndex && toIndex > Player.index) {
+          if (Player.queue[toIndex] && Player.queue[toIndex]._user) {
+            const [item] = Player.queue.splice(touchStartIndex, 1);
+            Player.queue.splice(toIndex, 0, item);
+            renderQueue();
+          }
+        }
+      };
+
+      row.addEventListener('touchstart', handleTouchStart, { passive: false });
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', handleTouchEnd, { passive: false });
+      window.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    });
   }
   const clr = $('#q-clear', el);
   if (clr) clr.addEventListener('click', clearUserQueue);
