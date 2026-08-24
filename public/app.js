@@ -3541,14 +3541,31 @@ function toggleFloatWidget() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!Player.floatOn || !Player.yt || !Player.ready) return;
-  try { Player.yt.playVideo(); } catch {}
+  // Don't force play on hidden - browsers block autoplay without user gesture
+  // YouTube iframe pauses by default when hidden; PiP mode keeps audio alive
 });
+// Keep audio alive in background via silent AudioContext (mobile workaround)
+let audioCtx = null;
+function ensureAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Create silent oscillator to keep audio context alive
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+// Resume audio context on first user interaction
+document.addEventListener('click', ensureAudioContext, { once: true });
+document.addEventListener('touchstart', ensureAudioContext, { once: true });
 setInterval(() => {
   if (!Player.floatOn || !Player.yt || !Player.ready) return;
   const st = Player.yt.getPlayerState && Player.yt.getPlayerState();
   if (st === 2 && document.hidden) {
-    try { Player.yt.playVideo(); } catch {}
+    // In PiP mode, player continues; in normal hidden, YouTube pauses - can't force
   }
 }, 1500);
 
@@ -3558,6 +3575,44 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
   if (window.caches) caches.keys().then((ks) => ks.forEach((k) => k.startsWith('smw-') && caches.delete(k))).catch(() => {});
 }
+
+/* PWA install prompt */
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  showInstallButton();
+});
+function showInstallButton() {
+  const existing = $('#pwa-install-btn');
+  if (existing) existing.remove();
+  const btn = document.createElement('button');
+  btn.id = 'pwa-install-btn';
+  btn.className = 'pill-btn';
+  btn.innerHTML = `${icon('i-download')}<span>Install App</span>`;
+  btn.style.position = 'fixed';
+  btn.style.bottom = '80px';
+  btn.style.right = '16px';
+  btn.style.zIndex = '9999';
+  btn.style.boxShadow = '0 4px 20px rgba(0,0,0,0.4)';
+  btn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      toast('Pler Music installed!');
+      btn.remove();
+      deferredPrompt = null;
+    }
+  });
+  document.body.appendChild(btn);
+}
+window.addEventListener('appinstalled', () => {
+  toast('Pler Music installed!');
+  const btn = $('#pwa-install-btn');
+  if (btn) btn.remove();
+  deferredPrompt = null;
+});
 
 /* boot */
 (() => {
