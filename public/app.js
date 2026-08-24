@@ -228,6 +228,7 @@ const Player = {
   queue: [],
   index: -1,
   shuffle: false,
+  smartShuffle: store.get('smart_shuffle', false), // 0 off, 1 regular, 2 smart
   repeat: 0, // 0 none, 1 all, 2 one
   lyrics: { synced: null, plain: null, source: null, lines: [] },
   lyricsBrowseId: null,
@@ -571,6 +572,7 @@ function persistQueue() {
       queue: q,
       index: Math.min(Math.max(0, Player.index), q.length - 1),
       shuffle: !!Player.shuffle,
+      smartShuffle: !!Player.smartShuffle,
       repeat: Player.repeat || 0,
       speed: Player.speed || 1,
     });
@@ -582,6 +584,7 @@ function restoreQueue() {
   Player.queue = st.queue.map((s) => ({ ...normalizeSong(s), _user: !!s._user }));
   Player.index = Math.min(Math.max(0, Number(st.index) || 0), Player.queue.length - 1);
   Player.shuffle = !!st.shuffle;
+  Player.smartShuffle = !!st.smartShuffle;
   Player.repeat = (st.repeat === 1 || st.repeat === 2) ? st.repeat : 0;
   if (typeof st.speed === 'number' && st.speed > 0) Player.speed = st.speed;
   Player.cued = true;
@@ -607,8 +610,11 @@ function restoreQueue() {
   document.title = `${s.title} • Pler Music`;
   applyTint(s.videoId || s.title);
   const shOn = Player.shuffle;
+  const shSmart = Player.smartShuffle;
   $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('on', shOn);
+  $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('smart', shSmart);
   $('#np-shuffle') && $('#np-shuffle').classList.toggle('on', shOn);
+  $('#np-shuffle') && $('#np-shuffle').classList.toggle('smart', shSmart);
   const on = Player.repeat > 0;
   const ic = icon(Player.repeat === 2 ? 'i-repeat-1' : 'i-repeat');
   [$('#mini-repeat'), $('#np-repeat')].forEach((b) => {
@@ -728,8 +734,17 @@ function nextTrack(auto) {
     const userNext = Player.queue.findIndex((q, i) => i > Player.index && q._user);
     if (userNext >= 0) ni = userNext;
     else {
-      // Smart Shuffle: use weighted algorithm based on play count, recency, artist diversity
-      ni = Library.getSmartShuffleIndex(Player.index, Player.queue);
+      if (Player.smartShuffle) {
+        // Smart Shuffle: weighted by play count, recency, artist diversity
+        ni = Library.getSmartShuffleIndex(Player.index, Player.queue);
+      } else {
+        // Regular shuffle: pure random
+        const radioStart = Player.queue.findIndex((q, i) => i > Player.index && !q._user);
+        const radioEnd = Player.queue.length;
+        if (radioStart >= 0 && radioStart < radioEnd - 1) {
+          ni = radioStart + Math.floor(Math.random() * (radioEnd - radioStart));
+        } else ni = Player.index + 1;
+      }
     }
   } else ni = Player.index + 1;
   if (ni >= Player.queue.length) {
@@ -821,6 +836,13 @@ function renderPlayButtons() {
   const qa = $('#np-queueadd');
   if (pn) pn.classList.toggle('hidden', !preview);
   if (qa) qa.classList.toggle('hidden', !preview);
+  // shuffle buttons
+  const isOn = Player.shuffle;
+  const isSmart = Player.smartShuffle;
+  $('#mini-shuffle').classList.toggle('on', isOn);
+  $('#mini-shuffle').classList.toggle('smart', isSmart);
+  $('#np-shuffle').classList.toggle('on', isOn);
+  $('#np-shuffle').classList.toggle('smart', isSmart);
   syncFloatWidget();
 }
 
@@ -2960,12 +2982,24 @@ const openQueue = (e) => { e.stopPropagation(); openNowPlaying(); switchNPTab('q
 $('#mini-queue').addEventListener('click', openQueue);
 $('#mini-queue-m').addEventListener('click', openQueue);
 /* shuffle / repeat on the bar (synced with Now Playing buttons) */
+function cycleShuffle() {
+  // Cycle: off (0) -> regular (1) -> smart (2) -> off (0)
+  if (!Player.shuffle) { Player.shuffle = true; Player.smartShuffle = false; }
+  else if (Player.shuffle && !Player.smartShuffle) { Player.smartShuffle = true; }
+  else { Player.shuffle = false; Player.smartShuffle = false; }
+  const isOn = Player.shuffle;
+  const isSmart = Player.smartShuffle;
+  $('#mini-shuffle').classList.toggle('on', isOn);
+  $('#mini-shuffle').classList.toggle('smart', isSmart);
+  $('#np-shuffle').classList.toggle('on', isOn);
+  $('#np-shuffle').classList.toggle('smart', isSmart);
+  persistQueue();
+  const msg = !isOn ? 'Shuffle off' : (isSmart ? 'Smart shuffle on' : 'Shuffle on');
+  toast(msg);
+}
 $('#mini-shuffle').addEventListener('click', (e) => {
   e.stopPropagation();
-  Player.shuffle = !Player.shuffle;
-  $('#mini-shuffle').classList.toggle('on', Player.shuffle);
-  $('#np-shuffle').classList.toggle('on', Player.shuffle);
-  toast(Player.shuffle ? 'Shuffle on' : 'Shuffle off');
+  cycleShuffle();
 });
 $('#mini-repeat').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -3018,11 +3052,7 @@ $('#np-queueadd').addEventListener('click', () => {
 $('#np-addpl').addEventListener('click', () => focusedSong() && openAddToPlaylist(focusedSong()));
 $('#np-download').addEventListener('click', () => focusedSong() && downloadSong(focusedSong()));
 $('#np-shuffle').addEventListener('click', function () {
-  Player.shuffle = !Player.shuffle;
-  this.classList.toggle('on', Player.shuffle);
-  $('#mini-shuffle').classList.toggle('on', Player.shuffle);
-  persistQueue();
-  toast(Player.shuffle ? 'Shuffle on' : 'Shuffle off');
+  cycleShuffle();
 });
 $('#np-repeat').addEventListener('click', function () {
   Player.repeat = (Player.repeat + 1) % 3;

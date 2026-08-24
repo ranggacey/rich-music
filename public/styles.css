@@ -612,12 +612,28 @@ body.np-open.has-player #nowplaying { margin-bottom: var(--player-h); }
 .icon-btn {
   padding: 5px; border-radius: 50%; color: var(--muted); line-height: 0;
   transition: color 0.15s, transform 0.12s, background 0.12s;
+  position: relative;
 }
 .icon-btn .ic { width: 18px; height: 18px; }
 .icon-btn.sm .ic { width: 16px; height: 16px; }
 .icon-btn:hover { color: var(--text); transform: scale(1.08); }
 .icon-btn.liked { color: var(--accent-bright); }
 #mini-shuffle.on, #mini-repeat.on, #np-shuffle.on, #np-repeat.on, #np-sleep.on { color: var(--accent-bright); }
+#mini-shuffle.smart, #np-shuffle.smart {
+  color: var(--accent-bright);
+}
+#mini-shuffle.smart::after, #np-shuffle.smart::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  border: 2px solid var(--main-bg);
+  box-shadow: 0 0 0 1px var(--accent-bright);
+}
 .play-circle {
   width: 36px; height: 36px; border-radius: 50%;
   background: var(--play-bg); color: var(--play-fg);
