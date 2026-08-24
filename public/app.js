@@ -769,6 +769,12 @@ function startCurrent() {
   Player._lyricsDur = 0;
   lastLyricIdx = -1;
   syncFloatLyric('');
+  // Clear mini-player lyric on new track
+  const miniLyric = $('#mini-lyric');
+  if (miniLyric) {
+    miniLyric.classList.add('hidden');
+    miniLyric.classList.remove('has-lyrics');
+  }
   renderNowPlaying();
   renderQueue();
   updateLikeButtons();
@@ -1063,6 +1069,12 @@ function renderLyrics() {
   }
   src.textContent = L.source ? `Lyrics provided by ${L.source}` : '';
   lastLyricIdx = -1;
+  // Clear mini-lyric when no synced lyrics available
+  const miniLyric = $('#mini-lyric');
+  if (miniLyric) {
+    miniLyric.classList.add('hidden');
+    miniLyric.classList.remove('has-lyrics');
+  }
   if (L.lines.length) {
     $('#np-lyric-preview').textContent = '';
     syncFloatLyric('');
@@ -1093,6 +1105,18 @@ function updateLyricHighlight(cur) {
   const line = idx >= 0 ? L.lines[idx].text : '';
   $('#np-lyric-preview').textContent = line;
   syncFloatLyric(line);
+  // Update mini-player lyric
+  const miniLyric = $('#mini-lyric');
+  if (miniLyric) {
+    if (line) {
+      miniLyric.textContent = line;
+      miniLyric.classList.remove('hidden');
+      miniLyric.classList.add('has-lyrics');
+    } else {
+      miniLyric.classList.add('hidden');
+      miniLyric.classList.remove('has-lyrics');
+    }
+  }
 }
 
 /* ================= now playing UI ================= */
