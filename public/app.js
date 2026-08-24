@@ -1958,39 +1958,66 @@ function viewStats(view) {
 function viewLibrary(view, tab) {
   const tabs = [['playlists', 'Playlists'], ['favorites', 'Favorites'], ['saved', 'Saved'], ['history', 'History'], ['stats', 'Stats']];
   if (tab === 'stats') { go('#/stats'); return; }
+
+  // Library search state
+  const libSearchKey = 'libsearch_' + tab;
+  const savedSearch = store.get(libSearchKey, '');
+
+  const tabsHtml = tabs.map(([id, l]) => `<button class="chip ${tab === id ? 'active' : ''}" onclick="location.hash='#/library/${id}'">${l}</button>`).join('');
+  const searchHtml = `<div class="lib-search-wrap">
+    <label class="lib-search-label" for="lib-search">Search ${tab}</label>
+    <div class="lib-search-input-wrap">
+      <svg class="ic lib-search-ic"><use href="#i-search"/></svg>
+      <input type="search" id="lib-search" class="lib-search-input" placeholder="Filter ${tab}…" value="${esc(savedSearch)}" aria-label="Search ${tab}" />
+      ${savedSearch ? `<button type="button" class="lib-search-clear" id="lib-search-clear" aria-label="Clear search">${icon('i-x')}</button>` : ''}
+    </div>
+  </div>`;
+
   let body = '';
   if (tab === 'favorites') {
     const f = Library.favorites;
-    body = f.length
+    const filtered = filterLibraryItems(f, savedSearch, 'song');
+    body = filtered.length
       ? `<div class="lib-actions"><button class="pill-btn primary" id="fav-play">${icon('i-play')}<span>Play all</span></button> <button class="pill-btn" id="fav-shuffle">${icon('i-shuffle')}<span>Shuffle</span></button></div>
-         ${trackHeadHTML()}<div class="track-list">${f.map((s, i) => trackRowHTML({ ...s, subtitle: s.artist, tn: i + 1 })).join('')}</div>`
-      : emptyHTML('No liked songs yet', 'Tap the heart on any song to save it here.', { label: 'Find songs', go: '#/search', ic: 'i-heart-o' });
+         ${trackHeadHTML()}<div class="track-list">${filtered.map((s, i) => trackRowHTML({ ...s, subtitle: s.artist, tn: i + 1 })).join('')}</div>`
+      : emptyHTML(savedSearch ? `No matches for "${esc(savedSearch)}"` : 'No liked songs yet',
+          savedSearch ? 'Try a different search term.' : 'Tap the heart on any song to save it here.',
+          savedSearch ? { label: 'Clear search', act: 'libsearchclear', ic: 'i-x' } : { label: 'Find songs', go: '#/search', ic: 'i-heart-o' });
   } else if (tab === 'history') {
     const h = Library.history;
-    body = h.length
-      ? `${trackHeadHTML()}<div class="track-list">${h.map((s, i) => trackRowHTML({ ...s, subtitle: s.artist, tn: i + 1 })).join('')}</div>`
-      : emptyHTML('Nothing played yet', 'Songs you play will show up here.', { label: 'Browse home', go: '#/home', ic: 'i-clock' });
+    const filtered = filterLibraryItems(h, savedSearch, 'song');
+    body = filtered.length
+      ? `${trackHeadHTML()}<div class="track-list">${filtered.map((s, i) => trackRowHTML({ ...s, subtitle: s.artist, tn: i + 1 })).join('')}</div>`
+      : emptyHTML(savedSearch ? `No matches for "${esc(savedSearch)}"` : 'Nothing played yet',
+          savedSearch ? 'Try a different search term.' : 'Songs you play will show up here.',
+          savedSearch ? { label: 'Clear search', act: 'libsearchclear', ic: 'i-x' } : { label: 'Browse home', go: '#/home', ic: 'i-clock' });
   } else if (tab === 'saved') {
     const sv = Library.saved;
-    body = sv.length
-      ? `<div class="lib-grid">${sv.map(cardHTML).join('')}</div>`
-      : emptyHTML('Nothing saved yet', 'Open any album, playlist or artist and tap Save.', { label: 'Browse moods', go: '#/moods', ic: 'i-save' });
+    const filtered = filterLibraryItems(sv, savedSearch, 'item');
+    body = filtered.length
+      ? `<div class="lib-grid">${filtered.map(cardHTML).join('')}</div>`
+      : emptyHTML(savedSearch ? `No matches for "${esc(savedSearch)}"` : 'Nothing saved yet',
+          savedSearch ? 'Try a different search term.' : 'Open any album, playlist or artist and tap Save.',
+          savedSearch ? { label: 'Clear search', act: 'libsearchclear', ic: 'i-x' } : { label: 'Browse moods', go: '#/moods', ic: 'i-save' });
   } else {
     const pls = Library.playlists;
+    let cards = (Library.favorites.length ? likedCardHTML() : '') + pls.map((p) => `<div class="card" data-pl="${p.id}"><div class="art">${coverHTML(p.tracks[0] && p.tracks[0].thumbnail)}<div class="play-ov">${icon('i-play')}</div></div><div class="t">${esc(p.name)}</div><div class="s">${p.tracks.length} songs</div></div>`).join('');
+    const filtered = filterLibraryCards(cards, savedSearch);
     body = `<div class="lib-actions">
         <button class="pill-btn primary" id="btn-newpl">${icon('i-plus')}<span>New playlist</span></button>
         <button class="pill-btn" id="btn-import">${icon('i-download')}<span>Import from YT Music</span></button>
         <button class="pill-btn" id="btn-backup">${icon('i-download')}<span>Backup</span></button>
         <button class="pill-btn" id="btn-restore">${icon('i-upload')}<span>Restore</span></button>
       </div>`;
-    const cards = (Library.favorites.length ? likedCardHTML() : '') + pls.map((p) => `<div class="card" data-pl="${p.id}"><div class="art">${coverHTML(p.tracks[0] && p.tracks[0].thumbnail)}<div class="play-ov">${icon('i-play')}</div></div><div class="t">${esc(p.name)}</div><div class="s">${p.tracks.length} songs</div></div>`).join('');
-    body += cards
-      ? `<div class="lib-grid">${cards}</div>`
-      : emptyHTML('No playlists yet', 'Use New playlist above, or import one from YouTube Music.', { ic: 'i-note' });
+    body += filtered
+      ? `<div class="lib-grid">${filtered}</div>`
+      : emptyHTML(savedSearch ? `No matches for "${esc(savedSearch)}"` : 'No playlists yet',
+          savedSearch ? 'Try a different search term.' : 'Use New playlist above, or import one from YouTube Music.',
+          savedSearch ? { label: 'Clear search', act: 'libsearchclear', ic: 'i-x' } : { ic: 'i-note' });
   }
-  view.innerHTML = `<div class="page-title">Library</div>
-    <div class="chip-row">${tabs.map(([id, l]) => `<button class="chip ${tab === id ? 'active' : ''}" onclick="location.hash='#/library/${id}'">${l}</button>`).join('')}</div>${body}`;
+  view.innerHTML = `<div class="page-title">Library</div>${searchHtml}<div class="chip-row">${tabsHtml}</div>${body}`;
   bindItems(view);
+  setupLibrarySearch(view, tab, libSearchKey);
   const np = $('#btn-newpl');
   if (np) np.addEventListener('click', openCreatePlaylist);
   const im = $('#btn-import');
@@ -2005,6 +2032,90 @@ function viewLibrary(view, tab) {
   if (fsh) fsh.addEventListener('click', () => { const q = [...Library.favorites].sort(() => Math.random() - 0.5); playSong(q[0], q, 0); });
   $$('[data-pl]', view).forEach((el) => el.addEventListener('click', () => go(`#/localpl/${el.dataset.pl}`)));
   $$('[data-nav]', view).forEach((el) => el.addEventListener('click', () => go(el.dataset.nav)));
+}
+
+function filterLibraryItems(items, query, type) {
+  if (!query || !query.trim()) return items;
+  const q = query.toLowerCase().trim();
+  return items.filter((item) => {
+    const title = (item.title || '').toLowerCase();
+    const artist = (item.artist || item.subtitle || '').toLowerCase();
+    const album = (item.album && item.album.name) ? item.album.name.toLowerCase() : '';
+    return title.includes(q) || artist.includes(q) || album.includes(q);
+  });
+}
+
+function filterLibraryCards(cardsHtml, query) {
+  if (!query || !query.trim()) return cardsHtml;
+  const q = query.toLowerCase().trim();
+  // Parse cards from HTML and filter by title
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = cardsHtml;
+  const cards = tempDiv.querySelectorAll('[data-pl], .liked-card');
+  const filtered = [];
+  cards.forEach((card) => {
+    const titleEl = card.querySelector('.t');
+    const title = titleEl ? titleEl.textContent.toLowerCase() : '';
+    if (title.includes(q)) filtered.push(card.outerHTML);
+  });
+  return filtered.join('');
+}
+
+function setupLibrarySearch(view, tab, storageKey) {
+  const input = $('#lib-search', view);
+  const clearBtn = $('#lib-search-clear', view);
+  if (!input) return;
+
+  const debounce = (fn, ms) => {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  };
+
+  const doSearch = debounce((value) => {
+    store.set(storageKey, value);
+    route(); // re-render with filtered results
+  }, 200);
+
+  input.addEventListener('input', (e) => {
+    const val = e.target.value;
+    const wrap = input.closest('.lib-search-input-wrap');
+    if (wrap) {
+      const clear = wrap.querySelector('.lib-search-clear');
+      if (clear) clear.remove();
+      if (val) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lib-search-clear';
+        btn.setAttribute('aria-label', 'Clear search');
+        btn.innerHTML = icon('i-x');
+        wrap.appendChild(btn);
+        btn.addEventListener('click', () => {
+          input.value = '';
+          store.set(storageKey, '');
+          route();
+        });
+      }
+    }
+    doSearch(val);
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      store.set(storageKey, '');
+      route();
+    });
+  }
+
+  // Handle clear search from empty state
+  const emptyCta = view.querySelector('[data-act="libsearchclear"]');
+  if (emptyCta) {
+    emptyCta.addEventListener('click', () => {
+      input.value = '';
+      store.set(storageKey, '');
+      route();
+    });
+  }
 }
 
 /* ---- import a public YT Music playlist/album into local library ---- */

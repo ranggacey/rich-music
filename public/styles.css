@@ -1478,6 +1478,119 @@ html[data-theme="light"] .modal-card .pl-form-input {
   border-color: var(--accent-bright);
 }
 
+/* Library Search */
+.lib-search-wrap {
+  margin: 8px 0 16px;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.lib-search-label {
+  display: none; /* visually hidden but accessible */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.lib-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.lib-search-ic {
+  position: absolute;
+  left: 12px;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.lib-search-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 44px 0 44px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--elevated);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  outline: none;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.lib-search-input::placeholder {
+  color: var(--subdued);
+}
+.lib-search-input:hover {
+  background: var(--card-hover);
+}
+.lib-search-input:focus {
+  background: var(--card);
+  border-color: var(--accent-bright);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-bright) 25%, transparent);
+}
+.lib-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.lib-search-clear .ic {
+  width: 16px;
+  height: 16px;
+}
+.lib-search-clear:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+  transform: scale(1.1);
+}
+.lib-search-clear:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+/* Empty state adjustments for library search */
+.empty-block {
+  padding: 32px 24px;
+  text-align: center;
+}
+.empty-ic {
+  font-size: 48px;
+  color: var(--subdued);
+  margin-bottom: 12px;
+}
+.empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.empty-s {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+.empty-cta {
+  margin-top: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
