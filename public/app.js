@@ -40,6 +40,72 @@ function applyTint(key) {
   const main = $('#main');
   if (main) main.style.setProperty('--tint', hueFrom(key));
 }
+
+/* ================= album art color extraction ================= */
+let _tintCache = new Map();
+function extractDominantColor(img) {
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const size = 50; // downsample for performance
+    canvas.width = size;
+    canvas.height = size;
+    ctx.drawImage(img, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+    const counts = {};
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+      if (a < 128) continue; // skip transparent
+      // skip near-white/near-black/gray
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      if (max - min < 30) continue;
+      const key = `${r>>3},${g>>3},${b>>3}`; // quantize to reduce noise
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    let best = null, bestCount = 0;
+    for (const [key, count] of Object.entries(counts)) {
+      if (count > bestCount) { bestCount = count; best = key; }
+    }
+    if (!best) return null;
+    const [r, g, b] = best.split(',').map(x => parseInt(x) * 8); // de-quantize
+    return { r, g, b };
+  } catch {
+    return null;
+  }
+}
+function rgbToHue(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0;
+  if (max !== min) {
+    if (max === r) h = 60 * (((g - b) / (max - min)) % 6);
+    else if (max === g) h = 60 * ((b - r) / (max - min) + 2);
+    else h = 60 * ((r - g) / (max - min) + 4);
+  }
+  return Math.round((h + 360) % 360);
+}
+function applyTintFromColor(r, g, b) {
+  const hue = rgbToHue(r, g, b);
+  document.documentElement.style.setProperty('--tint', hue);
+  const main = $('#main');
+  if (main) main.style.setProperty('--tint', hue);
+  // update accent color for visualizer
+  document.documentElement.style.setProperty('--eq', `hsl(${hue}, 70%, 50%)`);
+}
+function extractAndApplyTint(thumbnailUrl) {
+  if (!thumbnailUrl || _tintCache.has(thumbnailUrl)) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const color = extractDominantColor(img);
+    if (color) {
+      _tintCache.set(thumbnailUrl, color);
+      applyTintFromColor(color.r, color.g, color.b);
+    }
+  };
+  img.onerror = () => {};
+  img.src = thumbnailUrl;
+}
 function currentTheme() {
   return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 }
@@ -1228,7 +1294,10 @@ function renderNowPlaying() {
     ma.classList.toggle('linkish', !!(songArtistBrowseId(mini) || artist.trim()));
   }
   if (!np) return;
-  $('#np-art').src = safeCover(np.thumbnail) || COVER_PH;
+  const coverUrl = safeCover(np.thumbnail) || COVER_PH;
+  $('#np-art').src = coverUrl;
+  // Extract dominant color from album art for dynamic theme tint
+  if (np.thumbnail) extractAndApplyTint(np.thumbnail);
   $('#np-title').textContent = np.title;
   const artEl = $('#np-artist');
   artEl.textContent = np.artist || np.subtitle || '';
