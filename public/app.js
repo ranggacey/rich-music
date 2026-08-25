@@ -746,6 +746,98 @@ function moveQueued(i, dir) {
   renderQueue();
 }
 
+/* ================= queue export/import ================= */
+function exportQueue() {
+  if (!Player.queue.length) { toast('Queue is empty'); return; }
+  const data = {
+    version: 1,
+    exportedAt: Date.now(),
+    queue: Player.queue.map(slimSong).filter(Boolean),
+    index: Player.index,
+    shuffle: !!Player.shuffle,
+    smartShuffle: !!Player.smartShuffle,
+    repeat: Player.repeat || 0,
+    speed: Player.speed || 1,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const name = `pler-music-queue-${new Date().toISOString().slice(0, 10)}.json`;
+  clickDownload(url, name);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast('Queue exported');
+}
+
+async function importQueue(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.queue) || !data.queue.length) {
+      toast('Invalid queue file');
+      return;
+    }
+    Player.queue = data.queue.map((s) => ({ ...normalizeSong(s), _user: !!s._user }));
+    Player.index = Math.min(Math.max(0, Number(data.index) || 0), Player.queue.length - 1);
+    Player.shuffle = !!data.shuffle;
+    Player.smartShuffle = !!data.smartShuffle;
+    Player.repeat = (data.repeat === 1 || data.repeat === 2) ? data.repeat : 0;
+    if (typeof data.speed === 'number' && data.speed > 0) Player.speed = data.speed;
+    Player.cued = true;
+    Player.pending = null;
+    const s = Player.current;
+    if (s) {
+      const loadId = ++Player.loadId;
+      const tryCue = () => {
+        if (loadId !== Player.loadId) return;
+        if (!Player.ready) return setTimeout(tryCue, 300);
+        try {
+          Player.yt.cueVideoById({ videoId: s.videoId, suggestedQuality: suggestedQuality() });
+          Player.yt.setPlaybackRate(Player.speed);
+        } catch {}
+      };
+      tryCue();
+    }
+    renderNowPlaying();
+    renderQueue();
+    updateLikeButtons();
+    renderPlayButtons();
+    $('#miniplayer').classList.remove('hidden');
+    document.body.classList.add('has-player', 'paused');
+    if (s) {
+      document.title = `${s.title} • Pler Music`;
+      applyTint(s.videoId || s.title);
+    }
+    const shOn = Player.shuffle;
+    const shSmart = Player.smartShuffle;
+    $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('on', shOn);
+    $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('smart', shSmart);
+    $('#np-shuffle') && $('#np-shuffle').classList.toggle('on', shOn);
+    $('#np-shuffle') && $('#np-shuffle').classList.toggle('smart', shSmart);
+    const on = Player.repeat > 0;
+    const ic = icon(Player.repeat === 2 ? 'i-repeat-1' : 'i-repeat');
+    [$('#mini-repeat'), $('#np-repeat')].forEach((b) => {
+      if (!b) return;
+      b.classList.toggle('on', on);
+      b.innerHTML = ic;
+    });
+    const sp = $('#np-speed span');
+    if (sp) sp.textContent = Player.speed + '×';
+    toast(`Queue imported (${data.queue.length} tracks)`);
+  } catch (e) {
+    toast('Failed to import queue: ' + e.message);
+  }
+}
+
+function openImportQueue() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) importQueue(file);
+  });
+  input.click();
+}
+
 function startCurrent() {
   Player.cued = false;
   Player.pending = null;
@@ -1175,7 +1267,7 @@ function renderSideQueue() {
       <span class="sq-meta"><span class="sq-t">${esc(now.title)}</span><br><span class="sq-s">${esc(now.artist || now.subtitle || '')}</span></span>
     </button>`;
   if (user.length) {
-    html += `<div class="sq-sec">Your queue · ${user.length}</div>`;
+    html += `<div class="sq-sec">Your queue · ${user.length}</div><div class="sq-actions"><button type="button" class="sq-btn" id="sq-export" title="Export queue">${icon('i-download')}</button><button type="button" class="sq-btn" id="sq-import" title="Import queue">${icon('i-upload')}</button></div>`;
     html += user.map(({ q, i }, n) => `<button type="button" class="sq-row" data-qi="${i}">
       <span class="sq-n">${n + 1}</span>
       ${coverHTML(q.thumbnail, 'sq')}
@@ -1196,6 +1288,10 @@ function renderSideQueue() {
     Player.index = idx;
     startCurrent();
   }));
+  const sqExp = $('#sq-export', el);
+  if (sqExp) sqExp.addEventListener('click', exportQueue);
+  const sqImp = $('#sq-import', el);
+  if (sqImp) sqImp.addEventListener('click', openImportQueue);
 }
 function updateQueueTab() {
   const n = userQueueCount();
@@ -1235,7 +1331,7 @@ function renderQueue() {
     html += `<div class="q-head">Now playing</div>${trackRowHTML({ ...now, qi: Player.index }, true)}`;
   }
   if (user.length) {
-    html += `<div class="q-head q-head-row"><span>Your queue · ${user.length}</span><button type="button" class="q-clear" id="q-clear">Clear</button></div>`;
+    html += `<div class="q-head q-head-row"><span>Your queue · ${user.length}</span><div class="q-actions"><button type="button" class="q-btn" id="q-export" title="Export queue">${icon('i-download')}</button><button type="button" class="q-btn" id="q-import" title="Import queue">${icon('i-upload')}</button><button type="button" class="q-clear" id="q-clear">Clear</button></div></div>`;
     html += user.map(({ q, i }, n) => {
       const up = n === 0 ? ' disabled' : '';
       const dn = n === user.length - 1 ? ' disabled' : '';
@@ -1445,6 +1541,10 @@ function renderQueue() {
   }
   const clr = $('#q-clear', el);
   if (clr) clr.addEventListener('click', clearUserQueue);
+  const exp = $('#q-export', el);
+  if (exp) exp.addEventListener('click', exportQueue);
+  const imp = $('#q-import', el);
+  if (imp) imp.addEventListener('click', openImportQueue);
   persistQueue();
 }
 async function loadRelated(force = false) {
