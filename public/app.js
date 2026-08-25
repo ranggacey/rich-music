@@ -139,6 +139,24 @@ function isPreviewing() {
   return !!(Player.pending && (!Player.current || Player.pending.videoId !== Player.current.videoId));
 }
 
+/* ================= Media Session API (lock screen / notification controls) ================= */
+function updateMediaSessionPlaybackState(state) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = state; // 'playing' | 'paused' | 'none'
+}
+function updateMediaSessionPositionState() {
+  if (!('mediaSession' in navigator) || !Player.yt || !Player.ready || !Player.current) return;
+  const dur = Player.yt.getDuration?.() || 0;
+  const cur = Player.yt.getCurrentTime?.() || 0;
+  if (dur > 0) {
+    navigator.mediaSession.setPositionState({
+      duration: dur,
+      playbackRate: Player.speed || 1,
+      position: cur,
+    });
+  }
+}
+
 /* ================= local library (localStorage) ================= */
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem('smw_' + k)) ?? d; } catch { return d; } },
@@ -653,10 +671,12 @@ window.onYouTubeIframeAPIReady = () => {
           setTimeout(applyPlaybackQuality, 500);
           setTimeout(applyPlaybackQuality, 2000);
           if (Player.visualizerEnabled) startVisualizer();
+          updateMediaSessionPlaybackState('playing');
         }
         if (e.data === YT.PlayerState.BUFFERING) applyPlaybackQuality();
         if (e.data === YT.PlayerState.PAUSED) {
           if (Player.visualizerEnabled) stopVisualizer();
+          updateMediaSessionPlaybackState('paused');
         }
         document.body.classList.toggle('paused', e.data !== YT.PlayerState.PLAYING);
         renderPlayButtons();
@@ -947,9 +967,16 @@ function startCurrent() {
     });
     navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
     navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack(false));
-    navigator.mediaSession.setActionHandler('play', () => Player.yt && Player.yt.playVideo());
-    navigator.mediaSession.setActionHandler('pause', () => Player.yt && Player.yt.pauseVideo());
+    navigator.mediaSession.setActionHandler('play', () => { Player.yt && Player.yt.playVideo(); updateMediaSessionPlaybackState('playing'); });
+    navigator.mediaSession.setActionHandler('pause', () => { Player.yt && Player.yt.pauseVideo(); updateMediaSessionPlaybackState('paused'); });
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (Player.yt && Player.ready && typeof details.seekTime === 'number') {
+        Player.yt.seekTo(details.seekTime, true);
+      }
+    });
   }
+  updateMediaSessionPlaybackState('playing');
+  updateMediaSessionPositionState();
   loadLyrics(s);
   loadSponsorBlock(s.videoId);
   // Last.fm: update Now Playing and reset scrobble flag
@@ -1105,6 +1132,7 @@ setInterval(() => {
     $('#np-dur').textContent = fmtTime(dur);
   }
   if (!isPreviewing()) updateLyricHighlight(cur);
+  if (playing) updateMediaSessionPositionState();
   syncFloatProgress(pct);
   if (Player.floatOn) drawPipFrame(pct);
 }, 400);
