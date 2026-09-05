@@ -1,4 +1,4 @@
-# Pler Music
+# RAWr Music
 
 **Pemutar musik web gratis** bergaya Spotify, katalog [YouTube Music](https://music.youtube.com). Tanpa akun.
 
